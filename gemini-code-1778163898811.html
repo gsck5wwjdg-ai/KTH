@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Carrier Commander - Tactical Rebalance</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Orbitron', sans-serif; }
+        
+        /* HUD 및 패널 */
+        #hud { position: absolute; top: 30px; left: 30px; color: #00ffcc; pointer-events: none; z-index: 10; }
+        .panel { 
+            background: rgba(0, 20, 30, 0.7); padding: 15px; 
+            border: 1px solid rgba(0, 255, 204, 0.3); border-left: 8px solid #00ffcc;
+            margin-bottom: 10px; min-width: 250px; backdrop-filter: blur(10px);
+        }
+        .label { font-size: 10px; letter-spacing: 2px; margin-bottom: 5px; opacity: 0.8; }
+        .value { font-size: 28px; font-weight: 900; text-shadow: 0 0 10px #00ffcc; }
+        
+        /* HP 게이지 UI */
+        #hp-display {
+            position: absolute; display: none; width: 140px; height: 8px;
+            background: rgba(255,0,0,0.2); border: 1px solid rgba(255,0,0,0.5); pointer-events: none;
+            box-shadow: 0 0 10px rgba(255,0,0,0.3);
+        }
+        #hp-bar { width: 100%; height: 100%; background: #ff3300; transition: width 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+
+        /* 데미지 텍스트 */
+        .dmg-text {
+            position: absolute; font-weight: 900; font-size: 32px;
+            pointer-events: none; text-shadow: 0 0 8px #000; animation: floatUp 1.2s ease-out forwards;
+        }
+        @keyframes floatUp { 
+            0% { transform: translateY(0) scale(0.5); opacity: 0; } 
+            20% { transform: translateY(-20px) scale(1.2); opacity: 1; }
+            100% { transform: translateY(-120px) scale(1); opacity: 0; } 
+        }
+
+        /* 재장전 UI (고퀄리티 원형) */
+        #reload-container {
+            position: absolute; bottom: 40px; left: 40px; width: 120px; text-align: center;
+        }
+        #reload-ring {
+            width: 90px; height: 90px; border-radius: 50%; margin: 0 auto;
+            background: conic-gradient(#00ffcc 0deg, rgba(0, 255, 204, 0.05) 0deg);
+            display: flex; align-items: center; justify-content: center; position: relative;
+            box-shadow: inset 0 0 20px rgba(0, 255, 204, 0.1);
+        }
+        #reload-ring::after { content: ""; position: absolute; width: 74px; height: 74px; background: #050b14; border-radius: 50%; border: 1px solid rgba(0, 255, 204, 0.2); }
+        #reload-timer { position: relative; z-index: 2; color: #fff; font-size: 20px; font-weight: 900; }
+
+        /* 락온 UI */
+        #lockon-container { position: absolute; width: 150px; height: 150px; display: none; transform: translate(-50%, -50%); pointer-events: none; }
+        .bracket { position: absolute; width: 30px; height: 30px; border: 4px solid #ffff00; filter: drop-shadow(0 0 5px #ffff00); }
+        .tl { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+        .tr { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+        .bl { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+        .br { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+        #lockon-container.locked .bracket { border-color: #ff0000; filter: drop-shadow(0 0 8px #ff0000); animation: pulse 0.3s infinite alternate; }
+        @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.1); } }
+
+        #minimap-container { position: absolute; bottom: 40px; right: 40px; width: 220px; height: 220px; background: rgba(0,10,15,0.9); border: 2px solid #00ffcc; border-radius: 50%; overflow: hidden; box-shadow: 0 0 30px rgba(0,255,204,0.2); }
+        #radar-sweep { position: absolute; width: 100%; height: 100%; background: conic-gradient(from 0deg, rgba(0,255,204,0.4), transparent 120deg); animation: sweep 4s linear infinite; }
+        @keyframes sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        #overlay { position: absolute; width: 100%; height: 100%; background: #000; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; color: white; }
+        #start-btn { padding: 25px 100px; font-size: 24px; cursor: pointer; background: transparent; color: #00ffcc; border: 2px solid #00ffcc; font-family: 'Orbitron'; transition: 0.3s; }
+        #start-btn:hover { background: #00ffcc; color: #000; box-shadow: 0 0 50px #00ffcc; }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div id="overlay">
+        <h1 style="letter-spacing: 15px; font-weight: 900;">NAVAL STRIKE</h1>
+        <p style="color: #444; margin-bottom: 50px; letter-spacing: 2px;">V3.5 TACTICAL UPDATE</p>
+        <button id="start-btn">SYSTEM LINK START</button>
+    </div>
+
+    <div id="hud">
+        <div class="panel">
+            <div class="label">ENGINE THRUST</div>
+            <div id="speed-val" class="value">0</div>
+        </div>
+        <div class="panel">
+            <div class="label" id="w-name">AGM-84 MISSILE</div>
+            <div id="weapon-status" style="font-size: 12px; font-weight: bold; color: #ffff00;">ACOUSTIC SEARCHING...</div>
+        </div>
+    </div>
+
+    <div id="hp-display"><div id="hp-bar"></div></div>
+
+    <div id="reload-container">
+        <div id="reload-ring"><div id="reload-timer">RDY</div></div>
+        <div style="font-size: 11px; color: #00ffcc; margin-top: 8px; font-weight: bold; letter-spacing: 1px;">WEAPON RELOAD</div>
+    </div>
+
+    <div id="lockon-container">
+        <div class="bracket tl"></div><div class="bracket tr"></div>
+        <div class="bracket bl"></div><div class="bracket br"></div>
+    </div>
+
+    <div id="minimap-container">
+        <div id="radar-sweep"></div>
+        <canvas id="minimap-canvas"></canvas>
+    </div>
+
+    <script type="importmap"> { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } } </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let scene, camera, renderer, player;
+        let enemies = [], projectiles = [], explosions = [], particles = [];
+        let isRunning = false, keys = {}, weapon = 'MISSILE', lastFire = 0;
+        let pTarget = null, lTarget = null, lProgress = 0;
+
+        // --- 요청된 무기 스펙 ---
+        const WEAPON_DATA = {
+            'MISSILE': { reload: 3500, damage: 25, color: 0xeeeeee, trailColor: 0xdddddd, fontColor: '#ffcc00' },
+            'TORPEDO': { reload: 5500, damage: 45, color: 0x00aaff, trailColor: 0x00ffff, fontColor: '#00ccff' }
+        };
+
+        const miniCanvas = document.getElementById('minimap-canvas');
+        const miniCtx = miniCanvas.getContext('2d');
+        miniCanvas.width = 220; miniCanvas.height = 220;
+
+        function createHighResCarrier(color, isAlly) {
+            const ship = new THREE.Group();
+            const mat = new THREE.MeshPhongMaterial({ color, shininess: 80 });
+            const deckMat = new THREE.MeshPhongMaterial({ color: 0x1a1a1a });
+
+            const hull = new THREE.Mesh(new THREE.BoxGeometry(60, 30, 300), mat);
+            const bow = new THREE.Mesh(new THREE.CylinderGeometry(0, 30, 80, 4), mat);
+            bow.rotation.set(Math.PI/2, Math.PI/4, 0); bow.position.z = 185;
+            
+            const deck = new THREE.Mesh(new THREE.BoxGeometry(105, 5, 360), deckMat);
+            deck.position.y = 18;
+
+            const island = new THREE.Group();
+            island.add(new THREE.Mesh(new THREE.BoxGeometry(20, 35, 60), mat));
+            island.position.set(40, 35, -40);
+
+            ship.add(hull, bow, deck, island);
+            ship.userData = { maxHp: 100, hp: 100, isAlly, speed: 0, dead: false };
+            scene.add(ship);
+            return ship;
+        }
+
+        function createProjectileModel(type) {
+            const data = WEAPON_DATA[type];
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 24, 12), new THREE.MeshPhongMaterial({ color: data.color }));
+            body.rotation.x = Math.PI / 2;
+            const head = new THREE.Mesh(new THREE.ConeGeometry(2.2, 7, 12), new THREE.MeshPhongMaterial({ color: 0xff3300 }));
+            head.rotation.x = Math.PI / 2; head.position.z = 15;
+            group.add(body, head);
+            const engineLight = new THREE.PointLight(data.trailColor, 400, 150);
+            engineLight.position.z = -15;
+            group.add(engineLight);
+            return group;
+        }
+
+        function spawnDmgText(pos, amount, color) {
+            const screenPos = pos.clone().project(camera);
+            const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
+            const el = document.createElement('div');
+            el.className = 'dmg-text';
+            el.innerText = `-${amount}`;
+            el.style.left = `${x}px`; el.style.top = `${y}px`;
+            el.style.color = color;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 1200);
+        }
+
+        function createSmoke(pos, color = 0xdddddd) {
+            const size = Math.random() * 4 + 2;
+            const geo = new THREE.SphereGeometry(size, 4, 4);
+            const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5 });
+            const smoke = new THREE.Mesh(geo, mat);
+            smoke.position.copy(pos);
+            scene.add(smoke);
+            particles.push({ mesh: smoke, life: 1.0 });
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050b14);
+            scene.fog = new THREE.Fog(0x050b14, 5000, 60000);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 200000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+            const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+            sun.position.set(5000, 10000, 5000); scene.add(sun);
+
+            const water = new THREE.Mesh(new THREE.PlaneGeometry(400000, 400000), new THREE.MeshPhongMaterial({ color: 0x000a15, shininess: 120 }));
+            water.rotation.x = -Math.PI / 2; scene.add(water);
+
+            player = createHighResCarrier(0x546e7a, true);
+            for(let i=0; i<12; i++) {
+                const e = createHighResCarrier(0x2c3e50, false);
+                e.position.set((Math.random()-0.5)*100000, 0, (Math.random()-0.5)*100000 - 40000);
+                enemies.push(e);
+            }
+            animate();
+        }
+
+        function updateUI() {
+            let best = null; let minDist = 0.8;
+            enemies.forEach(e => {
+                if (e.userData.dead) return;
+                const p = e.position.clone().project(camera);
+                const d = Math.sqrt(p.x*p.x + p.y*p.y);
+                if (p.z < 1 && d < minDist) { minDist = d; best = e; }
+            });
+
+            const lockUI = document.getElementById('lockon-container');
+            const hpUI = document.getElementById('hp-display');
+            const statusText = document.getElementById('weapon-status');
+
+            if (best) {
+                if (pTarget !== best) { pTarget = best; lTarget = null; lProgress = 0; }
+                lProgress = Math.min(100, lProgress + 0.8); 
+                if (lProgress >= 100) { 
+                    lTarget = pTarget; lockUI.className = 'locked'; statusText.innerText = "TARGET LOCKED"; statusText.style.color = "#ff0000";
+                    hpUI.style.display = 'block';
+                    const hpPercent = (best.userData.hp / best.userData.maxHp) * 100;
+                    document.getElementById('hp-bar').style.width = hpPercent + '%';
+                    document.getElementById('hp-bar').style.backgroundColor = hpPercent > 50 ? '#00ffcc' : (hpPercent > 25 ? '#ffff00' : '#ff0000');
+                } else { 
+                    lockUI.className = ''; statusText.innerText = `ANALYZING... ${Math.floor(lProgress)}%`; statusText.style.color = "#ffff00";
+                    hpUI.style.display = 'none';
+                }
+                const sPos = best.position.clone().project(camera);
+                const x = (sPos.x * 0.5 + 0.5) * window.innerWidth;
+                const y = (-sPos.y * 0.5 + 0.5) * window.innerHeight;
+                lockUI.style.display = 'block'; lockUI.style.left = `${x}px`; lockUI.style.top = `${y}px`;
+                hpUI.style.left = `${x - 70}px`; hpUI.style.top = `${y - 120}px`;
+            } else {
+                pTarget = null; lTarget = null; lProgress = 0; lockUI.style.display = 'none'; hpUI.style.display = 'none';
+                statusText.innerText = "SCANNING SECTOR..."; statusText.style.color = "#00ffcc";
+            }
+
+            // 재장전 UI 로직
+            const weaponInfo = WEAPON_DATA[weapon];
+            const elapsed = Date.now() - lastFire;
+            const ring = document.getElementById('reload-ring');
+            const timerText = document.getElementById('reload-timer');
+            if (elapsed < weaponInfo.reload) {
+                const percent = (elapsed / weaponInfo.reload) * 360;
+                ring.style.background = `conic-gradient(#00ffcc ${percent}deg, rgba(0, 255, 204, 0.1) 0deg)`;
+                timerText.innerText = ((weaponInfo.reload - elapsed) / 1000).toFixed(1) + "s";
+                timerText.style.color = "#ffaa00";
+            } else {
+                ring.style.background = `conic-gradient(#00ffcc 360deg, rgba(0, 255, 204, 0.1) 0deg)`;
+                timerText.innerText = "RDY";
+                timerText.style.color = "#00ffcc";
+            }
+        }
+
+        function animate() {
+            if (!isRunning) return;
+            requestAnimationFrame(animate);
+
+            if (keys['w']) player.userData.speed = Math.min(player.userData.speed + 0.02, 4.0);
+            else if (keys['s']) player.userData.speed = Math.max(player.userData.speed - 0.03, -1.0);
+            else player.userData.speed *= 0.996;
+            if (keys['a']) player.rotation.y += 0.01;
+            if (keys['d']) player.rotation.y -= 0.01;
+            player.translateZ(player.userData.speed);
+
+            updateUI();
+
+            // 투사체 로직 (속도 0.007 유지)
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                const p = projectiles[i]; p.t += 0.0075; 
+                const data = WEAPON_DATA[p.type];
+                const pos = new THREE.Vector3().lerpVectors(p.start, p.target.position, p.t);
+                
+                if (p.type === 'MISSILE') pos.y += Math.sin(p.t * Math.PI) * 2800;
+                else pos.y = -15; // 어뢰는 조금 더 깊게
+                
+                p.mesh.position.copy(pos); p.mesh.lookAt(p.target.position);
+                if (Math.random() > 0.3) createSmoke(pos, data.trailColor);
+                
+                if (p.t >= 1) {
+                    p.target.userData.hp -= data.damage;
+                    spawnDmgText(p.target.position, data.damage, data.fontColor);
+                    
+                    const expSize = p.type === 'MISSILE' ? 140 : 200;
+                    const exp = new THREE.Mesh(new THREE.SphereGeometry(expSize, 32, 32), new THREE.MeshBasicMaterial({ color: data.trailColor, transparent: true }));
+                    exp.position.copy(p.target.position); scene.add(exp); explosions.push(exp);
+                    
+                    if(p.target.userData.hp <= 0 && !p.target.userData.dead) {
+                        p.target.userData.dead = true;
+                    }
+                    scene.remove(p.mesh); projectiles.splice(i, 1);
+                }
+            }
+
+            // 침몰 애니메이션
+            enemies.forEach(e => {
+                if(e.userData.dead) {
+                    e.position.y -= 0.6; e.rotation.z += 0.001; e.rotation.x += 0.001;
+                    if(Math.random() > 0.85) createSmoke(e.position, 0x222222);
+                    if(e.position.y < -150) e.visible = false;
+                }
+            });
+
+            // 파티클 소멸
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const pt = particles[i]; pt.life -= 0.02; pt.mesh.scale.multiplyScalar(1.06);
+                pt.mesh.material.opacity = pt.life;
+                if (pt.life <= 0) { scene.remove(pt.mesh); particles.splice(i, 1); }
+            }
+
+            // 폭발 소멸
+            explosions.forEach((ex, i) => { ex.scale.addScalar(0.9); ex.material.opacity *= 0.85; if(ex.material.opacity < 0.1) { scene.remove(ex); explosions.splice(i, 1); }});
+
+            // 미니맵 업데이트
+            miniCtx.clearRect(0, 0, 220, 220);
+            enemies.forEach(e => {
+                if (e.userData.dead) return;
+                const x = 110 + (e.position.x - player.position.x) / 700;
+                const y = 110 + (e.position.z - player.position.z) / 700;
+                if(x < 0 || x > 220 || y < 0 || y > 220) return;
+                miniCtx.fillStyle = '#ff3300'; miniCtx.beginPath(); miniCtx.arc(x, y, 4, 0, Math.PI*2); miniCtx.fill();
+            });
+            miniCtx.fillStyle = '#fff'; miniCtx.beginPath(); miniCtx.arc(110, 110, 6, 0, Math.PI*2); miniCtx.fill();
+
+            camera.position.lerp(new THREE.Vector3(0, 400, -1100).applyMatrix4(player.matrixWorld), 0.08);
+            camera.lookAt(player.position.clone().add(new THREE.Vector3(0, 50, 0)));
+            document.getElementById('speed-val').innerText = Math.floor(player.userData.speed * 18) + " KTS";
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('keydown', e => {
+            keys[e.key.toLowerCase()] = true;
+            if(e.key.toLowerCase() === 't') {
+                weapon = weapon === 'MISSILE' ? 'TORPEDO' : 'MISSILE';
+                const name = weapon === 'MISSILE' ? "AGM-84 MISSILE" : "Mk-48 TORPEDO";
+                document.getElementById('w-name').innerText = name;
+            }
+        });
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+        
+        window.addEventListener('mousedown', () => {
+            if(!lTarget || Date.now() - lastFire < WEAPON_DATA[weapon].reload) return;
+            lastFire = Date.now();
+            const proj = createProjectileModel(weapon);
+            proj.position.copy(player.position).y += 45; 
+            scene.add(proj);
+            projectiles.push({ mesh: proj, start: proj.position.clone(), target: lTarget, t: 0, type: weapon });
+        });
+
+        document.getElementById('start-btn').onclick = () => { document.getElementById('overlay').style.display = 'none'; isRunning = true; init(); };
+    </script>
+</body>
+</html>
